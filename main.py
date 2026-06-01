@@ -1,56 +1,52 @@
 import os
 import arxiv
 import google.generativeai as genai
+import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# إعدادات الذكاء الاصطناعي
+# تفعيل الـ Logging لمتابعة عمل البوت في الـ Logs
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+# إعدادات Gemini
 genai.configure(api_key=os.environ.get("GEMINI_KEY"))
 model = genai.GenerativeModel('gemini-pro')
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🔭 أهلاً بك في 'مرصد'!\n\n"
-        "أنا مساعدك العلمي الشخصي. اسألني عن أي موضوع (مثل: 'حدثني عن الثقوب السوداء' أو 'أحدث أبحاث الجينات') "
-        "وسأقوم بـ:\n"
-        "1. البحث في أرشيف العلوم (arXiv).\n"
-        "2. تلخيص أهم النتائج لك.\n"
-        "3. تزويدك بالروابط المباشرة."
-    )
+    await update.message.reply_text("🔭 أهلاً بك في 'مرصد'! أنا جاهز لاستكشاف الأبحاث العلمية. اكتب لي موضوع البحث وسأحضر لك النتائج.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
-    status_msg = await update.message.reply_text("🤔 جاري التفكير والبحث في أمهات الكتب العلمية...")
+    status_msg = await update.message.reply_text("🔍 جاري البحث والتحليل...")
     
     try:
-        # استخدام Gemini لتحويل طلب المستخدم إلى "استعلام بحث" دقيق جداً
-        prompt = f"حول هذا الطلب إلى كلمات مفتاحية بحثية علمية بالإنجليزية فقط: '{user_text}'"
-        analysis = model.generate_content(prompt)
+        # تحويل طلب المستخدم لإنجليزية للبحث الدقيق
+        analysis = model.generate_content(f"حول هذا الموضوع العلمي إلى استعلام بحث بالإنجليزية: {user_text}")
         query = analysis.text.strip()
         
-        search = arxiv.Search(query=query, max_results=3, sort_by=arxiv.SortCriterion.SubmittedDate)
-        
+        search = arxiv.Search(query=query, max_results=2, sort_by=arxiv.SortCriterion.SubmittedDate)
         results = list(search.results())
         
         if not results:
-            await context.bot.edit_message_text(chat_id=update.message.chat_id, message_id=status_msg.message_id, 
-                                                text="لم أجد نتائج دقيقة. هل يمكنك محاولة صياغة سؤالك بطريقة أخرى؟")
+            await context.bot.edit_message_text(chat_id=update.message.chat_id, message_id=status_msg.message_id, text="عذراً، لم أجد أبحاثاً حديثة بهذا المسمى.")
             return
 
-        # إرسال النتائج بشكل تفاعلي
-        await context.bot.edit_message_text(chat_id=update.message.chat_id, message_id=status_msg.message_id, 
-                                            text=f"✅ وجدت لك أحدث 3 أبحاث حول: *{query}*")
+        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=status_msg.message_id)
         
         for result in results:
-            summary = model.generate_content(f"لخص لي هذا البحث في جملتين بسيطتين: {result.summary[:500]}").text
-            await update.message.reply_text(f"📄 *{result.title}*\n\n📝 *الملخص:* {summary}\n\n🔗 {result.pdf_url}")
+            # تلخيص ذكي
+            summary = model.generate_content(f"لخص هذا البحث في جملة واحدة: {result.summary[:300]}").text
+            await update.message.reply_text(f"📄 *{result.title}*\n\n📝 *ملخص:* {summary}\n\n🔗 {result.pdf_url}")
             
     except Exception as e:
-        await context.bot.edit_message_text(chat_id=update.message.chat_id, message_id=status_msg.message_id, 
-                                            text="حدث خطأ في النظام. أنا هنا، جرب إرسال موضوع آخر!")
+        logging.error(f"Error: {e}")
+        await context.bot.edit_message_text(chat_id=update.message.chat_id, message_id=status_msg.message_id, text="حدث خطأ تقني، سأحاول مجدداً لاحقاً.")
 
 if __name__ == '__main__':
+    # البوت يبدأ الآن مع خاصية drop_pending_updates لمنع أي Conflict
     app = ApplicationBuilder().token(os.environ.get("TELEGRAM_TOKEN")).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    app.run_polling()
+    
+    print("🚀 مرصد يعمل الآن...")
+    app.run_polling(drop_pending_updates=True)
